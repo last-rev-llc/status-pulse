@@ -1,0 +1,227 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ─── Auth (Auth.js Prisma Adapter) ───
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts    Account[]
+  sessions    Session[]
+  memberships Membership[]
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ─── Multi-Tenant ───
+
+model Workspace {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  plan        Plan     @default(FREE)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  stripeCustomerId       String? @unique
+  stripeSubscriptionId   String? @unique
+  stripePriceId          String?
+  stripeCurrentPeriodEnd DateTime?
+
+  memberships Membership[]
+  sites       Site[]
+  statusPages StatusPage[]
+}
+
+model Membership {
+  id          String   @id @default(cuid())
+  userId      String
+  workspaceId String
+  role        Role     @default(MEMBER)
+  createdAt   DateTime @default(now())
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, workspaceId])
+}
+
+enum Plan {
+  FREE
+  PRO
+  ENTERPRISE
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+// ─── Core Domain ───
+
+model Site {
+  id              String     @id @default(cuid())
+  workspaceId     String
+  name            String
+  url             String
+  description     String?
+  status          SiteStatus @default(UNKNOWN)
+  responseTimeMs  Int?
+  uptimePercent   Float      @default(100)
+  checkIntervalMs Int        @default(300000) // 5 min
+  lastCheckedAt   DateTime?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  workspace  Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  checks     Check[]
+  incidents  Incident[]
+  alertRules AlertRule[]
+
+  @@index([workspaceId])
+  @@index([status])
+}
+
+enum SiteStatus {
+  UP
+  DOWN
+  DEGRADED
+  UNKNOWN
+}
+
+model Check {
+  id             String     @id @default(cuid())
+  siteId         String
+  status         SiteStatus
+  responseTimeMs Int?
+  statusCode     Int?
+  errorMessage   String?
+  checkedAt      DateTime   @default(now())
+
+  site Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  @@index([siteId, checkedAt])
+}
+
+model Incident {
+  id          String         @id @default(cuid())
+  siteId      String
+  title       String
+  description String?
+  status      IncidentStatus @default(INVESTIGATING)
+  startedAt   DateTime       @default(now())
+  resolvedAt  DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  site    Site             @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  updates IncidentUpdate[]
+
+  @@index([siteId])
+}
+
+enum IncidentStatus {
+  INVESTIGATING
+  IDENTIFIED
+  MONITORING
+  RESOLVED
+}
+
+model IncidentUpdate {
+  id         String         @id @default(cuid())
+  incidentId String
+  status     IncidentStatus
+  message    String
+  createdAt  DateTime       @default(now())
+
+  incident Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+}
+
+model AlertRule {
+  id          String       @id @default(cuid())
+  siteId      String
+  type        AlertType
+  threshold   Int?
+  channel     AlertChannel
+  destination String
+  enabled     Boolean      @default(true)
+  createdAt   DateTime     @default(now())
+
+  site Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+}
+
+enum AlertType {
+  DOWN
+  DEGRADED
+  RECOVERY
+  RESPONSE_TIME
+}
+
+enum AlertChannel {
+  EMAIL
+  SLACK
+  WEBHOOK
+}
+
+model StatusPage {
+  id           String   @id @default(cuid())
+  workspaceId  String
+  slug         String   @unique
+  title        String
+  description  String?
+  isPublic     Boolean  @default(true)
+  customDomain String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
